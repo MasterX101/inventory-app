@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Shop POS</title>
+
+<!-- Barcode library -->
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+body { font-family: Arial, sans-serif; margin:0; background:#f5f6fa; }
+.header { background:#2f3640; color:white; padding:12px; text-align:center; }
+.screen { display:none; padding:12px; padding-bottom:80px; }
+.screen.active { display:block; }
+.scanner { display:flex; gap:6px; margin-bottom:10px; }
+input { padding:10px; margin:5px 0; width:100%; box-sizing:border-box; }
+button { padding:10px; cursor:pointer; }
+table { width:100%; background:white; border-collapse:collapse; margin-top:10px; }
+th, td { border:1px solid #ddd; padding:6px; text-align:center; }
+.bottomNav { position:fixed; bottom:0; width:100%; background:#2f3640; display:flex; }
+.bottomNav button { flex:1; color:white; background:transparent; border:none; padding:14px; }
+.checkoutBtns { display:flex; gap:10px; margin-top:10px; }
+.paid { background:#27ae60; color:white; flex:1; }
+.udhar { background:#e67e22; color:white; flex:1; }
+.scanBtn { background:#0984e3; color:white; }
+#reader { width:100%; margin-top:10px; display:none; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+<header class="header">
+  <h2 id="screenTitle">POS</h2>
+</header>
+
+<!-- POS SCREEN -->
+<section id="posScreen" class="screen active">
+  <div class="scanner">
+    <input id="barcodeInput" placeholder="Scan or enter barcode...">
+    <button class="scanBtn" onclick="startScanner('pos')">📷 Scan Barcode</button>
+    <button onclick="addToCart()">Add</button>
+  </div>
+  <div id="reader"></div>
+
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Price</th><th>Qty</th><th>Total</th></tr>
+    </thead>
+    <tbody id="cartBody"></tbody>
+  </table>
+
+  <h3 id="grandTotal">Grand Total: Rs 0</h3>
+
+  <div class="checkoutBtns">
+    <button class="paid">Paid</button>
+    <button class="udhar">Pay Later</button>
+  </div>
+</section>
+
+<!-- INVENTORY SCREEN -->
+<section id="inventoryScreen" class="screen">
+  <h3>Add New Item</h3>
+
+  <button class="scanBtn" onclick="startScanner('inventory')">📷 Scan Barcode</button>
+  <div id="readerInventory"></div>
+
+  <input id="invBarcode" placeholder="Barcode">
+  <input id="invName" placeholder="Item name">
+  <input id="invPrice" placeholder="Selling price" type="number">
+  <input id="invQty" placeholder="Opening quantity" type="number">
+
+  <button onclick="saveItem()">Save Item</button>
+
+  <h3>Inventory List</h3>
+  <div id="inventoryList"></div>
+</section>
+
+<section id="udharScreen" class="screen"><h3>Udhar — Coming Next</h3></section>
+<section id="analyticsScreen" class="screen"><h3>Analytics — Coming Next</h3></section>
+<section id="settingsScreen" class="screen"><h3>Settings — Coming Next</h3></section>
+
+<nav class="bottomNav">
+  <button onclick="switchTab('pos')">POS</button>
+  <button onclick="switchTab('inventory')">Inventory</button>
+  <button onclick="switchTab('udhar')">Udhar</button>
+  <button onclick="switchTab('analytics')">Analytics</button>
+  <button onclick="switchTab('settings')">Settings</button>
+</nav>
+
+</div>
+
+<script>
+// ===== DATA =====
+let products = JSON.parse(localStorage.getItem("products") || "[]");
+let cart = [];
+let html5QrCode = null;
+let currentMode = null;
+
+// ===== TAB SWITCH =====
+function switchTab(tab){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.getElementById(tab+"Screen").classList.add("active");
+  document.getElementById("screenTitle").innerText = tab.charAt(0).toUpperCase() + tab.slice(1);
+  renderInventory();
+  stopScanner();
+}
+
+// ===== STOP SCANNER =====
+function stopScanner(){
+  if(html5QrCode){
+    html5QrCode.stop().catch(()=>{});
+    html5QrCode.clear().catch(()=>{});
+    html5QrCode = null;
+  }
+  document.getElementById("reader").style.display = "none";
+  document.getElementById("readerInventory").style.display = "none";
+}
+
+// ===== START SCANNER =====
+function startScanner(mode){
+  currentMode = mode;
+  stopScanner();
+
+  const readerId = mode==='pos' ? "reader" : "readerInventory";
+  const readerDiv = document.getElementById(readerId);
+  readerDiv.style.display = "block";
+  readerDiv.innerHTML = "";
+
+  html5QrCode = new Html5Qrcode(readerId);
+
+  const config = {
+    fps: 30,
+    qrbox: {width:260, height:100},
+    aspectRatio: 1.777,
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E
+    ],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+  };
+
+  html5QrCode.start(
+    { facingMode: { exact: "environment" } }, 
+    config,
+    onScanSuccess
+  ).catch(err=>{
+    alert("Camera start failed: " + err);
+    console.error(err);
+  });
+}
+
+// ===== ON SCAN SUCCESS =====
+function onScanSuccess(decodedText){
+  stopScanner();
+  if(currentMode==='pos'){
+    barcodeInput.value = decodedText;
+    addToCart(); // auto add to cart instantly
+  } else {
+    invBarcode.value = decodedText;
+    const existing = products.find(p=>p.barcode===decodedText);
+    if(existing){
+      invName.value = existing.name;
+      invPrice.value = existing.price;
+    }
+  }
+}
+
+// ===== SAVE ITEM =====
+function saveItem(){
+  const item = {
+    barcode: invBarcode.value.trim(),
+    name: invName.value.trim(),
+    price: Number(invPrice.value),
+    qty: Number(invQty.value)
+  };
+  if(!item.barcode || !item.name){ alert("Enter barcode and name"); return; }
+  products.push(item);
+  localStorage.setItem("products", JSON.stringify(products));
+  invBarcode.value=""; invName.value=""; invPrice.value=""; invQty.value="";
+  renderInventory();
+}
+
+// ===== RENDER INVENTORY =====
+function renderInventory(){
+  const div = document.getElementById("inventoryList");
+  if(!div) return;
+  div.innerHTML = products.map(p=>`${p.name} — Qty: ${p.qty}`).join("<br>");
+}
+
+// ===== ADD TO CART =====
+function addToCart(){
+  const code = barcodeInput.value.trim();
+  if(!code) return;
+  const product = products.find(p=>p.barcode===code);
+  if(!product){ alert("Item not found. Add to inventory first."); return; }
+  let cartItem = cart.find(c=>c.barcode===code);
+  if(cartItem) cartItem.qty += 1;
+  else cart.push({barcode:product.barcode,name:product.name,price:product.price,qty:1});
+  barcodeInput.value="";
+  renderCart();
+}
+
+// ===== RENDER CART =====
+function renderCart(){
+  const body = document.getElementById("cartBody");
+  body.innerHTML = cart.map(item=>`
+    <tr>
+      <td>${item.name}</td>
+      <td>${item.price}</td>
+      <td>${item.qty}</td>
+      <td>${item.price*item.qty}</td>
+    </tr>`).join("");
+  const total = cart.reduce((s,i)=>s+i.price*i.qty,0);
+  document.getElementById("grandTotal").innerText = "Grand Total: Rs " + total;
+}
+
+// ===== INIT =====
+renderInventory();
+</script>
+
+</body>
+</html>
